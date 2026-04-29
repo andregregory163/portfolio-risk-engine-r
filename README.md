@@ -10,7 +10,7 @@ volatility modelling and regulatory VaR backtesting.
 ---
 
 ## Results
-
+|---|---|
 | Metric | Value |
 | Annual Return | 29.89% |
 | Annual Volatility | 19.28% |
