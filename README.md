@@ -21,7 +21,7 @@ R-based portfolio analytics engine using real ASX + US holdings.
 
 ## Charts
 
-![Monte Carlo VaR](03_monte_carlo_var.png)
+See attached
 
 ## Tech Stack
 
