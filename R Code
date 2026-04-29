@@ -1,0 +1,468 @@
+# ==========================================================
+# GLOBAL PORTFOLIO RISK ENGINE (R)
+# Author: Andre Gregory
+#
+# Features:
+#   1. Portfolio performance metrics (Sharpe, Sortino, drawdown)
+#   2. Historical + Monte Carlo VaR / Expected Shortfall
+#   3. GARCH(1,1) volatility forecasting
+#   4. Kupiec & Christoffersen VaR backtests
+#   5. Benchmark comparison vs MSCI World (URTH)
+# ==========================================================
+
+# Install packages if needed (run once)
+# install.packages(c("quantmod","PerformanceAnalytics","tidyverse",
+#                    "lubridate","corrplot","scales","rugarch","xts"))
+
+suppressPackageStartupMessages({
+  library(quantmod)
+  library(PerformanceAnalytics)
+  library(tidyverse)
+  library(lubridate)
+  library(corrplot)
+  library(scales)
+  library(rugarch)
+  library(xts)
+})
+
+# ==========================================================
+# 1. PORTFOLIO HOLDINGS
+# ==========================================================
+
+holdings <- tibble(
+  ticker = c("GOLD.AX","HMC.AX","IJR.AX","IVV.AX","IXJ.AX","NEU.AX",
+             "NXG.AX","SMLL.AX","VAS.AX","VGS.AX","WIRE.AX","XRO.AX",
+             "XYZ.AX","ZIP.AX","AMD","ANET","APH","AVGO","UNH","VRT"),
+  value = c(2821.44, 3232.50, 2090.77, 18021.50, 1901.70, 4803.44,
+            4180.00, 1006.74, 13040.17, 1936.48, 2751.10, 1123.92,
+            4788.28, 3874.09, 2908.89, 2172.72, 1074.67, 1665.05,
+            1100.31, 3050.30)
+)
+holdings$weight <- holdings$value / sum(holdings$value)
+
+BENCHMARK <- "URTH"  # iShares MSCI World ETF
+RISK_FREE  <- 0.0425 # 10Y US Treasury approximation
+CONF_95    <- 0.95
+CONF_99    <- 0.99
+
+cat("============================================================\n")
+cat("GLOBAL PORTFOLIO RISK ENGINE\n")
+cat("============================================================\n")
+cat(sprintf("Total portfolio value: $%s\n\n",
+            format(round(sum(holdings$value), 2), big.mark = ",")))
+
+
+# ==========================================================
+# 2. DOWNLOAD PRICE DATA (10 YEARS)
+# ==========================================================
+
+start_date <- Sys.Date() - years(10)
+all_tickers <- c(holdings$ticker, BENCHMARK)
+
+cat("Downloading price data...\n")
+prices_list <- list()
+
+for (t in all_tickers) {
+  tryCatch({
+    px <- Ad(getSymbols(t, src = "yahoo", from = start_date,
+                        auto.assign = FALSE))
+    prices_list[[t]] <- px
+    cat(sprintf("  OK: %s\n", t))
+  }, error = function(e) cat(sprintf("  FAILED: %s\n", t)))
+}
+
+prices_xts  <- do.call(merge, prices_list)
+colnames(prices_xts) <- names(prices_list)
+returns_all <- na.omit(Return.calculate(prices_xts, method = "log"))
+
+# Separate benchmark
+bench_ret  <- returns_all[, BENCHMARK]
+asset_ret  <- returns_all[, colnames(returns_all) != BENCHMARK]
+
+# Align weights to successfully downloaded portfolio assets only
+valid <- intersect(holdings$ticker, colnames(asset_ret))
+w <- holdings %>%
+  filter(ticker %in% valid) %>%
+  arrange(match(ticker, valid)) %>%
+  pull(weight)
+w <- w / sum(w)
+
+port_ret <- Return.portfolio(asset_ret[, valid], weights = w)
+
+
+# ==========================================================
+# 3. CORE PERFORMANCE METRICS
+# ==========================================================
+
+cat("\n============================================================\n")
+cat("PORTFOLIO PERFORMANCE METRICS\n")
+cat("============================================================\n")
+
+ann_ret  <- Return.annualized(port_ret) * 100
+ann_vol  <- StdDev.annualized(port_ret) * 100
+sharpe   <- SharpeRatio.annualized(port_ret, Rf = RISK_FREE / 252)
+# Manual Sortino — consistent annualisation with Sharpe
+sortino_manual <- function(ret, rf = RISK_FREE) {
+  excess   <- as.numeric(ret) - rf / 252
+  downside <- sd(excess[excess < 0]) * sqrt(252)
+  mean(excess) * 252 / downside
+}
+sortino <- sortino_manual(port_ret)
+mdd      <- maxDrawdown(port_ret) * 100
+
+cat(sprintf("Annualised Return:   %6.2f%%\n", ann_ret))
+cat(sprintf("Annualised Vol:      %6.2f%%\n", ann_vol))
+cat(sprintf("Sharpe Ratio:        %6.2f\n",   sharpe))
+cat(sprintf("Sortino Ratio:       %6.2f\n",   sortino))
+cat(sprintf("Max Drawdown:        %6.2f%%\n", mdd))
+
+
+# ==========================================================
+# 4. HISTORICAL VAR
+# ==========================================================
+
+cat("\n--- Historical VaR ---\n")
+hvar95 <- quantile(port_ret, 1 - CONF_95)
+hvar99 <- quantile(port_ret, 1 - CONF_99)
+hes95  <- mean(port_ret[port_ret <= hvar95])
+
+cat(sprintf("VaR  95%% (1-day):    %6.3f%%\n", hvar95 * 100))
+cat(sprintf("VaR  99%% (1-day):    %6.3f%%\n", hvar99 * 100))
+cat(sprintf("Expected Shortfall:  %6.3f%%\n", hes95  * 100))
+
+
+# ==========================================================
+# 5. MONTE CARLO VAR (UNIVARIATE — NORMAL)
+# ==========================================================
+
+cat("\n--- Monte Carlo VaR ---\n")
+
+mu    <- mean(port_ret)
+sigma <- sd(port_ret)
+set.seed(42)
+sim   <- rnorm(10000, mean = mu, sd = sigma)
+
+mc_var95 <- quantile(sim, 1 - CONF_95)
+mc_var99 <- quantile(sim, 1 - CONF_99)
+mc_es95  <- mean(sim[sim <= mc_var95])
+
+cat(sprintf("VaR  95%% (1-day):    %6.3f%%\n", mc_var95 * 100))
+cat(sprintf("VaR  99%% (1-day):    %6.3f%%\n", mc_var99 * 100))
+cat(sprintf("Expected Shortfall:  %6.3f%%\n", mc_es95  * 100))
+
+
+# ==========================================================
+# 6. GARCH(1,1) VOLATILITY FORECASTING
+# ==========================================================
+# GARCH models time-varying volatility — crucial for risk management
+# because financial returns exhibit volatility clustering (calm periods
+# followed by turbulent periods). A static sigma assumption underestimates
+# tail risk after market shocks.
+
+cat("\n============================================================\n")
+cat("GARCH(1,1) VOLATILITY MODEL\n")
+cat("============================================================\n")
+
+garch_spec <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model     = list(armaOrder = c(0, 0), include.mean = TRUE),
+  distribution.model = "std"  # Student-t for fat tails
+)
+
+garch_fit <- ugarchfit(spec = garch_spec, data = port_ret)
+
+# Extract key parameters
+coef_g <- coef(garch_fit)
+omega  <- coef_g["omega"]
+alpha1 <- coef_g["alpha1"]
+beta1  <- coef_g["beta1"]
+persist <- alpha1 + beta1
+
+cat(sprintf("omega (baseline var):  %.6f\n", omega))
+cat(sprintf("alpha1 (shock impact): %.4f\n", alpha1))
+cat(sprintf("beta1  (persistence):  %.4f\n", beta1))
+cat(sprintf("Persistence (a+b):     %.4f  ",  persist))
+cat(ifelse(persist > 0.95, "[HIGH - vol shocks are long-lasting]\n",
+           "[MODERATE - vol reverts to mean quickly]\n"))
+
+# 21-day ahead forecast
+garch_forecast <- ugarchforecast(garch_fit, n.ahead = 21)
+sigma_forecast  <- as.numeric(sigma(garch_forecast))
+vol_forecast_ann <- sigma_forecast * sqrt(252) * 100
+
+cat(sprintf("\n21-day vol forecast (annualised):\n"))
+cat(sprintf("  Day 1:   %.2f%%\n", vol_forecast_ann[1]))
+cat(sprintf("  Day 10:  %.2f%%\n", vol_forecast_ann[10]))
+cat(sprintf("  Day 21:  %.2f%%\n", vol_forecast_ann[21]))
+
+# GARCH-implied VaR (1-day, 95%) using time-varying sigma
+current_sigma <- tail(sigma(garch_fit), 1)
+garch_var95   <- qnorm(1 - CONF_95) * as.numeric(current_sigma)
+cat(sprintf("\nGARCH-implied VaR 95%% (today's sigma): %.3f%%\n",
+            garch_var95 * 100))
+cat(sprintf("Static Normal VaR 95%%:                 %.3f%%\n",
+            qnorm(1 - CONF_95) * sigma * 100))
+cat(sprintf("Difference (time-varying risk premium): %.3f%%\n",
+            (garch_var95 - qnorm(1 - CONF_95) * sigma) * 100))
+
+
+# ==========================================================
+# 7. KUPIEC & CHRISTOFFERSEN VAR BACKTESTS
+# ==========================================================
+# These are the tests regulators (Basel III) use to validate internal
+# risk models. They check whether VaR violations (days when actual loss
+# exceeds VaR estimate) occur at the right frequency and independently.
+#
+# KUPIEC (POF test): Tests whether the violation RATE is correct.
+#   H0: violation rate = (1 - confidence level)
+#   Reject H0 if p < 0.05 → model is mis-specified
+#
+# CHRISTOFFERSEN: Also tests whether violations are INDEPENDENT.
+#   Clustered violations (several bad days in a row) suggest the model
+#   fails to capture volatility clustering — exactly what GARCH fixes.
+
+cat("\n============================================================\n")
+cat("VAR BACKTESTING (KUPIEC & CHRISTOFFERSEN)\n")
+cat("============================================================\n")
+
+backtest_var <- function(returns, var_level, conf, label) {
+  n          <- length(returns)
+  violations <- as.integer(returns < var_level)
+  n_viol     <- sum(violations)
+  expected   <- (1 - conf)
+  obs_rate   <- n_viol / n
+  
+  cat(sprintf("\n%s @ %.0f%% confidence\n", label, conf * 100))
+  cat(sprintf("  Observations:        %d\n", n))
+  cat(sprintf("  Violations observed: %d  (%.2f%%)\n",
+              n_viol, obs_rate * 100))
+  cat(sprintf("  Violations expected: %.1f  (%.2f%%)\n",
+              n * expected, expected * 100))
+  
+  # --- Kupiec POF test ---
+  if (n_viol == 0 || n_viol == n) {
+    cat("  Kupiec p-value:      N/A (zero or all violations)\n")
+  } else {
+    lr_pof <- -2 * (
+      n_viol * log(expected / obs_rate) +
+        (n - n_viol) * log((1 - expected) / (1 - obs_rate))
+    )
+    p_kupiec <- pchisq(lr_pof, df = 1, lower.tail = FALSE)
+    cat(sprintf("  Kupiec LR stat:      %.4f\n", lr_pof))
+    cat(sprintf("  Kupiec p-value:      %.4f  %s\n", p_kupiec,
+                ifelse(p_kupiec > 0.05, "[PASS - rate is correct]",
+                       "[FAIL - rate is wrong]")))
+  }
+  
+  # --- Christoffersen independence test ---
+  if (n_viol < 2) {
+    cat("  Christoffersen:      N/A (insufficient violations)\n")
+    return(invisible(NULL))
+  }
+  
+  # Build transition matrix
+  v <- violations
+  n00 <- sum(v[-length(v)] == 0 & v[-1] == 0)
+  n01 <- sum(v[-length(v)] == 0 & v[-1] == 1)
+  n10 <- sum(v[-length(v)] == 1 & v[-1] == 0)
+  n11 <- sum(v[-length(v)] == 1 & v[-1] == 1)
+  
+  p01 <- n01 / max(n00 + n01, 1)
+  p11 <- n11 / max(n10 + n11, 1)
+  p_hat <- (n01 + n11) / max(n00 + n01 + n10 + n11, 1)
+  
+  # Log-likelihood under independence vs clustering
+  ll_indep <- (n01 + n11) * log(p_hat) +
+    (n00 + n10) * log(1 - p_hat)
+  ll_dep   <- n01 * log(p01) + n00 * log(1 - p01) +
+    n11 * log(p11) + n10 * log(1 - p11)
+  
+  # Guard against degenerate cases
+  if (!is.finite(ll_indep) || !is.finite(ll_dep)) {
+    cat("  Christoffersen:      N/A (degenerate transitions)\n")
+    return(invisible(NULL))
+  }
+  
+  lr_cc  <- -2 * (ll_indep - ll_dep)
+  p_cc   <- pchisq(lr_cc, df = 1, lower.tail = FALSE)
+  
+  cat(sprintf("  Christoffersen LR:   %.4f\n", lr_cc))
+  cat(sprintf("  Christoffersen p:    %.4f  %s\n", p_cc,
+              ifelse(p_cc > 0.05,
+                     "[PASS - violations are independent]",
+                     "[FAIL - violations are clustered]")))
+}
+
+backtest_var(port_ret, hvar95, CONF_95, "Historical VaR")
+backtest_var(port_ret, hvar99, CONF_99, "Historical VaR")
+backtest_var(port_ret, mc_var95, CONF_95, "Monte Carlo VaR")
+
+
+# ==========================================================
+# 8. BENCHMARK COMPARISON
+# ==========================================================
+
+cat("\n============================================================\n")
+cat("BENCHMARK COMPARISON (PORTFOLIO vs MSCI WORLD / URTH)\n")
+cat("============================================================\n")
+
+if (BENCHMARK %in% colnames(returns_all)) {
+  # Use merge() to align by date — safer than intersect() on xts indexes
+  combined_pb <- merge(port_ret, bench_ret, join = "inner")
+  combined_pb <- na.omit(combined_pb)
+  colnames(combined_pb) <- c("portfolio", "benchmark")
+  p <- combined_pb[, "portfolio"]
+  b <- combined_pb[, "benchmark"]
+  
+  # Alpha and Beta via OLS
+  reg    <- lm(as.numeric(p) ~ as.numeric(b))
+  alpha  <- coef(reg)[1] * 252   # Annualised Jensen's alpha
+  beta   <- coef(reg)[2]
+  r2     <- summary(reg)$r.squared
+  
+  # Tracking error and information ratio
+  active_ret <- p - b
+  te         <- StdDev.annualized(active_ret) * 100
+  ir         <- Return.annualized(active_ret) /
+    StdDev.annualized(active_ret)
+  
+  # Benchmark metrics
+  b_ann_ret  <- Return.annualized(b) * 100
+  b_ann_vol  <- StdDev.annualized(b) * 100
+  b_sharpe   <- SharpeRatio.annualized(b, Rf = RISK_FREE / 252)
+  b_mdd      <- maxDrawdown(b) * 100
+  
+  cat(sprintf("%-28s %10s %10s\n", "Metric", "Portfolio", "Benchmark"))
+  cat(strrep("-", 50), "\n", sep = "")
+  cat(sprintf("%-28s %9.2f%% %9.2f%%\n",
+              "Annualised Return", ann_ret, b_ann_ret))
+  cat(sprintf("%-28s %9.2f%% %9.2f%%\n",
+              "Annualised Volatility", ann_vol, b_ann_vol))
+  cat(sprintf("%-28s %10.2f %10.2f\n",
+              "Sharpe Ratio", sharpe, b_sharpe))
+  cat(sprintf("%-28s %9.2f%% %9.2f%%\n",
+              "Max Drawdown", mdd, b_mdd))
+  cat(strrep("-", 50), "\n", sep = "")
+  cat(sprintf("%-28s %10.4f\n", "Beta (vs benchmark)", beta))
+  cat(sprintf("%-28s %9.4f%%\n",
+              "Jensen's Alpha (ann.)", alpha * 100))
+  cat(sprintf("%-28s %10.4f\n", "R-squared", r2))
+  cat(sprintf("%-28s %9.2f%%\n", "Tracking Error (ann.)", te))
+  cat(sprintf("%-28s %10.2f\n", "Information Ratio", ir))
+  
+  cat(sprintf("\nInterpretation:\n"))
+  cat(sprintf("  Beta = %.2f: ", beta))
+  if (beta > 1.1) cat("portfolio amplifies market moves\n")
+  else if (beta < 0.9) cat("portfolio is defensive vs market\n")
+  else cat("portfolio moves broadly in line with market\n")
+  
+  cat(sprintf("  Alpha = %.2f%%: ", alpha * 100))
+  if (alpha > 0) cat("outperforming benchmark on risk-adjusted basis\n")
+  else cat("underperforming benchmark on risk-adjusted basis\n")
+  
+} else {
+  cat("Benchmark data unavailable — skipping comparison.\n")
+}
+
+
+# ==========================================================
+# 9. CONCENTRATION RISK
+# ==========================================================
+
+cat("\n============================================================\n")
+cat("TOP HOLDINGS BY WEIGHT\n")
+cat("============================================================\n")
+
+holdings %>%
+  mutate(weight_pct = percent(weight, accuracy = 0.01)) %>%
+  arrange(desc(value)) %>%
+  select(ticker, weight_pct, value) %>%
+  head(10) %>%
+  print(n = 10)
+
+
+# ==========================================================
+# 10. CHARTS
+# ==========================================================
+
+# 1. Portfolio growth + drawdown
+png("01_portfolio_performance.png", width = 1000, height = 600)
+charts.PerformanceSummary(
+  port_ret,
+  main = "Portfolio Performance Summary",
+  colorset = c("#185FA5")
+)
+dev.off()
+
+# 2. Correlation heatmap
+png("02_correlation_heatmap.png", width = 900, height = 800)
+corrplot(
+  cor(asset_ret[, valid], use = "complete.obs"),
+  method   = "color",
+  type     = "upper",
+  tl.cex   = 0.65,
+  addCoef.col = "black",
+  number.cex  = 0.45,
+  title    = "Asset Correlation Matrix",
+  mar      = c(0, 0, 2, 0)
+)
+dev.off()
+
+# 3. Monte Carlo distribution with VaR lines
+png("03_monte_carlo_var.png", width = 900, height = 500)
+hist(sim, breaks = 60,
+     main = "Monte Carlo Return Distribution (10,000 simulations)",
+     xlab = "Simulated 1-Day Return",
+     col  = "lightsteelblue",
+     border = "white")
+abline(v = mc_var95, lwd = 2.5, col = "red",
+       lty = 2)
+abline(v = mc_var99, lwd = 2.5, col = "darkred",
+       lty = 2)
+legend("topright",
+       legend = c(sprintf("VaR 95%%: %.3f%%", mc_var95 * 100),
+                  sprintf("VaR 99%%: %.3f%%", mc_var99 * 100)),
+       col = c("red", "darkred"),
+       lwd = 2, lty = 2, bty = "n")
+dev.off()
+
+# 4. GARCH conditional volatility
+png("04_garch_volatility.png", width = 1000, height = 500)
+garch_sigma <- sigma(garch_fit) * sqrt(252) * 100
+plot(as.numeric(garch_sigma),
+     type = "l",
+     col  = "#185FA5",
+     lwd  = 1.2,
+     main = "GARCH(1,1) Conditional Volatility (Annualised)",
+     xlab = "Trading Days",
+     ylab = "Volatility (%)")
+abline(h = ann_vol, col = "red", lty = 2, lwd = 1.5)
+legend("topright",
+       legend = c("GARCH Vol", "Static Vol"),
+       col    = c("#185FA5", "red"),
+       lwd = c(1.2, 1.5),
+       lty = c(1, 2),
+       bty = "n")
+dev.off()
+
+# 5. Portfolio vs Benchmark cumulative returns
+if (BENCHMARK %in% colnames(returns_all) && exists("combined_pb")) {
+  png("05_benchmark_comparison.png", width = 1000, height = 500)
+  plot_data <- combined_pb
+  colnames(plot_data) <- c("Portfolio", "MSCI World")
+  charts.PerformanceSummary(
+    plot_data,
+    main       = "Portfolio vs MSCI World (URTH)",
+    colorset   = c("#185FA5", "#E87722"),
+    legend.loc = "topleft"
+  )
+  dev.off()
+}
+
+cat("\n============================================================\n")
+cat("COMPLETE. Charts saved to working directory.\n")
+cat("Run getwd() to locate output files.\n")
+cat("============================================================\n")
+
+getwd()
+
