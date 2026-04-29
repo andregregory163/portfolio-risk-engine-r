@@ -1,31 +1,32 @@
 # Portfolio Risk Engine (R)
 
-Built an R-based portfolio analytics engine using real market holdings.
+R-based portfolio analytics engine using real ASX + US holdings.
 
 ## Features
 
-* 10 years historical data via Yahoo Finance
-* Portfolio annual return / volatility
-* Sharpe Ratio
-* Sortino Ratio
-* Max Drawdown
-* Historical VaR (95%, 99%)
+* 10 years of historical market data
+* Sharpe Ratio / Sortino Ratio
+* Maximum Drawdown
+* Historical VaR
 * Monte Carlo VaR
 * Expected Shortfall
 * Correlation Heatmap
 
-## Example Outputs
+## Example Results
 
-See uploaded charts:
+* Annual Return: 29.89%
+* Volatility: 19.28%
+* Sharpe Ratio: 1.45
+* Max Drawdown: 18.04%
 
-* portfolio_growth.png
-* correlation_heatmap.png
-* var_distribution.png
+## Charts
+
+![Monte Carlo VaR](03_monte_carlo_var.png)
 
 ## Tech Stack
 
 R, quantmod, PerformanceAnalytics, tidyverse
 
-## Why I Built This
+## Purpose
 
-To demonstrate applied risk modelling, portfolio analytics and R programming for finance / actuarial roles.
+Built to demonstrate practical risk modelling skills for actuarial / investments / risk roles.
