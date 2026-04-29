@@ -105,11 +105,16 @@ rather than a better or worse one.
 
 ## Charts
 
-![Portfolio Performance](01_portfolio_performance.png)
-![Correlation Matrix](02_correlation_heatmap.png)
-![Monte Carlo VaR](03_monte_carlo_var.png)
-![GARCH Volatility](04_garch_volatility.png)
-![Benchmark Comparison](05_benchmark_comparison.png)
+
+![Portfolio Performance](https://raw.githubusercontent.com/andregregory163/portfolio-risk-engine-r/main/01_portfolio_performance.png)
+
+![Correlation Matrix](https://raw.githubusercontent.com/andregregory163/portfolio-risk-engine-r/main/02_correlation_heatmap.png)
+
+![Monte Carlo VaR](https://raw.githubusercontent.com/andregregory163/portfolio-risk-engine-r/main/03_monte_carlo_var.png)
+
+![GARCH Volatility](https://raw.githubusercontent.com/andregregory163/portfolio-risk-engine-r/main/04_garch_volatility.png)
+
+![Benchmark Comparison](https://raw.githubusercontent.com/andregregory163/portfolio-risk-engine-r/main/05_benchmark_comparison.png)
 
 ---
 
