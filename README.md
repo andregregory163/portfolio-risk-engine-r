@@ -120,7 +120,7 @@ rather than a better or worse one.
 
 ## Portfolio
 
-20 holdings across ASX and US equities.
+20 holdings across ASX and US equities — total value AUD $77,544.
 
 | Ticker | Weight | Theme |
 |---|---|---|
@@ -134,6 +134,16 @@ rather than a better or worse one.
 | VRT | 3.93% | AI infrastructure |
 | AMD | 3.75% | AI semiconductors |
 | GOLD.AX | 3.64% | Gold hedge |
+| AVGO | 2.15% | AI custom silicon |
+| WIRE.AX | 3.55% | Copper miners ETF |
+| ANET | 2.80% | AI networking |
+| VGS.AX | 2.50% | International developed markets ETF |
+| IJR.AX | 2.70% | US small cap ETF |
+| IXJ.AX | 2.45% | Global healthcare ETF |
+| XRO.AX | 1.45% | SaaS / accounting software |
+| UNH | 1.42% | US healthcare |
+| APH | 1.39% | AI connectors |
+| SMLL.AX | 1.30% | Australian small cap ETF |
 
 ---
 
